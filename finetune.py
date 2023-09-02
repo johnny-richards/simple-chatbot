@@ -146,6 +146,8 @@ def main(args):
         learning_rate = args.learning_rate,
         fp16 = args.fp16,
         logging_steps = args.logging_steps,
+        evaluation_strategy = "steps",
+        eval_steps = args.eval_steps,
         save_strategy = "steps",
         save_steps = args.save_steps,
         save_total_limit = 5,
@@ -159,7 +161,7 @@ def main(args):
         model=model,
         train_dataset = train_dataset,
         eval_dataset = valid_dataset,
-        args = args,
+        args = training_args,
         data_collator=collate_fn
     )
     print("trainer set done, start training")
@@ -182,6 +184,7 @@ if __name__ == "__main__":
     # reporting
     parser.add_argument("--logging_steps", type=int, default=10)
     parser.add_argument("--save_steps", type=int, default=600)
+    parser.add_argument("--eval_steps", type=int, default=600)
     # the following should not be contradictory with deepspeed config
     parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
     parser.add_argument("--learning_rate", type=float, default=5e-5)
