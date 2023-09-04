@@ -34,7 +34,55 @@ A training command examples are shown as following (adalora, zero2 and gradient 
 ``` Bash
 deepspeed --num_gpus=2 finetune.py --model_dir=$YOUR_PRETRAINED_MODEL_PATH --fp16 --batch_size=2 --max_length=3900 --save_steps=1000 --epochs=2 --warmup_steps=200 --gradient_accumulation_steps=2 --lora=adalora -—gradient_checkpointing
 ```
-You can set the location at which the checkpoints save, the default location is `./checkpoints`, please refer to finetune.py for more details.
+You can set the location at which the checkpoints save, the default location is `./checkpoints`, please refer to finetune.py for more details.<\br>
+The following deepspeed configuration with ZeRO2 offload works for my fintuning
+``` json
+{
+    "train_micro_batch_size_per_gpu": "auto",
+    "gradient_accumulation_steps": "auto",
+    "steps_per_print": 50,
+    "gradient_clipping": 1.0,
+    "zero_optimization": {
+        "stage": 2,
+        "offload_optimizer": {
+            "device": "cpu"
+        },
+        "contiguous_gradients": true,
+        "overlap_comm": true
+    },
+    "zero_allow_untested_optimizer": true,
+    "fp16": {
+        "enabled": "auto",
+        "loss_scale": 0,
+        "loss_scale_window": 1000,
+        "hysteresis": 2,
+        "min_loss_scale": 1
+    },
+    "optimizer": {
+        "type": "Adam",
+        "params": {
+            "lr": "auto",
+            "betas": "auto",
+            "eps": "auto",
+            "weight_decay": "auto"
+        }
+    },
+    "scheduler": {
+        "type": "WarmupDecayLR",
+        "params": {
+            "warmup_min_lr": 0,
+            "warmup_max_lr": "auto",
+            "warmup_num_steps": "auto",
+            "total_num_steps": "auto"
+        }
+    },
+    "activation_checkpointing": {
+        "partition_activations": true,
+        "contiguous_memory_optimization": true
+    },
+    "wall_clock_breakdown": false
+}
+```
 
 # Inference
 After you save you model at some path, inference is quite easy. Just run the following:
