@@ -2,7 +2,7 @@
 A pytorch simple chatbot framework for training and inference. Such frame work is far from perfect and only support T5 and ChatGLM2. We warmly welcome you to contribute to this repo for better and easier using, support of more backbones and RLHF in the future. Interactive functions are also welcomed.
 
 # Environments
-I have tried it works torch2.0 with the following environment, requirement.txt will be developed later.
+I have tried and it works under `torch 2.0` with a proper cuda version and the following environment, requirement.txt will be developed later.
 ```
 pandas
 numpy==1.25
@@ -34,7 +34,7 @@ A training command examples are shown as following (adalora, zero2 and gradient 
 ``` Bash
 deepspeed --num_gpus=2 finetune.py --model_dir=$YOUR_PRETRAINED_MODEL_PATH --fp16 --batch_size=2 --max_length=3900 --save_steps=1000 --epochs=2 --warmup_steps=200 --gradient_accumulation_steps=2 --lora=adalora -—gradient_checkpointing
 ```
-You can set the location at which the checkpoints save, the default location is `./checkpoints`, please refer to finetune.py for more details.<\br>
+You can set the location at which the checkpoints save, the default location is `./checkpoints`, please refer to finetune.py for more details.
 The following deepspeed configuration with ZeRO2 offload works for my fintuning
 ``` json
 {
