@@ -8,7 +8,6 @@ import torch
 import datasets
 from transformers import (
     AutoModel,
-    AutoModelForCasualLM,
     AutoTokenizer,
     DataCollatorForSeq2Seq,
     TrainingArguments,
@@ -17,7 +16,7 @@ from transformers import (
     T5ForConditionalGeneration
 )
 from peft import get_peft_model, AdaLoraConfig, TaskType
-import bitsandtypes as bnb
+# import bitsandtypes as bnb
 
 def set_random_seed(seed):
     if seed is not None and seed > 0:
@@ -41,27 +40,32 @@ def tokenize(text, tokenizer, max_length, add_eos_token=True):
         and add_eos_token):
         result["input_ids"].append(tokenizer.eos_token_id)
         result["attention_mask"].append(1)
+        if "position_ids" in result:
+            result["position_ids"].append(len(result["position_ids"]))
     result["labels"] = result["input_ids"].copy()
     return result
 
 def preprocess(example, **kwargs):
     max_length = kwargs.get("max_length", 128)
-    tokenizer = kwargs[tokenizer]
+    tokenizer = kwargs["tokenizer"]
     train_on_inputs = kwargs.get("train_on_inputs", False)
     add_eos_token = kwargs.get("add_eos_tokens", True)
     # get prompt
     prompt = example["instruction"]
     response = example["output"]
-    text = f"{prompt}{response}"
+    text = f"{prompt}\n\n{response}"
     tokenized_inp = tokenize(text, tokenizer, max_length, add_eos_token)
     if not train_on_inputs:
-        tokenized_prompt = tokenize(prompt, tokenizer, max_length, add_eos_token)
-        prompt_tokens_len = len(tokenized_prompt)
+        tokenized_prompt = tokenize(prompt, tokenizer, max_length, add_eos_token=False)
+        prompt_tokens_len = len(tokenized_prompt["input_ids"])
         tokenized_inp["labels"] = [-100] * prompt_tokens_len + tokenized_inp["labels"][prompt_tokens_len:]
+        target_len = len(tokenized_inp["input_ids"]) - prompt_tokens_len
+        assert target_len > 1, f"target length {target_len} too short"
     return tokenized_inp
 
 def find_all_linear_names(model, bits=16):
-    cls = bnb.nn.Linear4bit if bits==4 else (bnb.nn.Linear8itLt if bits==8 else torch.nn.Linear)
+    # cls = bnb.nn.Linear4bit if bits==4 else (bnb.nn.Linear8itLt if bits==8 else torch.nn.Linear)
+    cls = torch.nn.Linear
     lora_module_names = set()
     for name, module in model.named_modules():
         if isinstance(module, cls):
@@ -89,12 +93,12 @@ def get_finetuning_model(model_cls, model_type, model_dir, **kwargs):
     # only applicable if you choose to use lora
     if lora_strategy == "adalora":
         peft_config = AdaLoraConfig(
-            task_type = TaskType.CasualLM,
-            inference_model=False,
+            task_type = TaskType.CAUSAL_LM,
+            inference_mode=False,
             r = kwargs["lora_r"],
             lora_alpha = kwargs["lora_alpha"],
-            lora_dropout = kwargs["lora_dropout"]
-            target_modules = find_all_linear_names(model, kwargs["bit"]) if model_type in ["chatglm2"] else ["q", "v"]
+            lora_dropout = kwargs["lora_dropout"],
+            target_modules = find_all_linear_names(model, kwargs["bits"]) if model_type in ["chatglm2"] else ["q", "v"]
         )
     else:
         raise NotImplementedError
@@ -102,7 +106,7 @@ def get_finetuning_model(model_cls, model_type, model_dir, **kwargs):
     peft_model.is_parallelizable = True
     peft_model.model_parallel = True
     print("Lora is using, trainable paramters are:")
-    peft_model.print_trainable_paramters()
+    peft_model.print_trainable_parameters()
     return peft_model
 
 def get_dataset(data_path, tokenizer, max_length):
@@ -124,17 +128,17 @@ def main(args):
     print("get datasets")
     train_dataset = get_dataset(os.path.join(args.data_dir, "train.csv"),
                                 tokenizer=tokenizer, max_length= args.max_length)
-    valid_dataset = get_dataset(os.path.join(args.data_dir, "valid.csv"),
-                                tokenizer=tokenizer, max_length=args.max_length)
+    # valid_dataset = get_dataset(os.path.join(args.data_dir, "valid.csv"),
+    #                             tokenizer=tokenizer, max_length=args.max_length)
     # collate function
     print("set collate function")
-    collate_fn = DataCollatorForSeq2Seq(tokenizer, pad_to_multiples_of=8,
+    collate_fn = DataCollatorForSeq2Seq(tokenizer, pad_to_multiple_of=8,
                                         return_tensors="pt", padding=True)
     # get model
     print("get model")
     model = get_finetuning_model(model_cls, args.model_type, args.model_dir,
-                                 lora = args.lora, lora_aplha = args.lora_alpha,
-                                 lora_r = args.lora_r)
+                                 lora = args.lora, lora_alpha = args.lora_alpha,
+                                 lora_r = args.lora_r, lora_dropout=args.lora_dropout, bits=16)
     # training arguments
     print("setting training arguments...")
     training_args = TrainingArguments(
@@ -146,8 +150,7 @@ def main(args):
         learning_rate = args.learning_rate,
         fp16 = args.fp16,
         logging_steps = args.logging_steps,
-        evaluation_strategy = "steps",
-        eval_steps = args.eval_steps,
+        evaluation_strategy = "no",
         save_strategy = "steps",
         save_steps = args.save_steps,
         save_total_limit = 5,
@@ -160,12 +163,15 @@ def main(args):
     trainer = Trainer(
         model=model,
         train_dataset = train_dataset,
-        eval_dataset = valid_dataset,
+        eval_dataset = None,
         args = training_args,
         data_collator=collate_fn
     )
     print("trainer set done, start training")
     trainer.train()
+    # saving stage
+    print(f"finished training, save the last one")
+    model.save_pretrained("final_model")
     
 
 if __name__ == "__main__":
@@ -174,11 +180,13 @@ if __name__ == "__main__":
     # base arguments
     parser.add_argument("--output_dir", type=str, default="./checkpoints")
     parser.add_argument("--data_dir", type=str, default="./data")
+    parser.add_argument("--pretrain_model_path", type=str, default="./")
     parser.add_argument("--model_dir", type=str, default="./")
     # seed
     parser.add_argument("--seed", type=int, default=-1)
     # training arguments
     parser.add_argument("--epochs", type=int, default=3)
+    parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--warmup_steps", type=int, default=10)
     parser.add_argument("--deepspeed_config", type=str, default="./ds_zero2_config.json")
     # reporting
